@@ -212,6 +212,8 @@ struct BrowserWorld::State {
   double lastBatteryLevelUpdate = -1.0;
   bool reorientRequested = false;
   LockMode lockMode = LockMode::NO_LOCK;
+  float headLockOffsetX = 0.0f;   // смещение влево/вправо
+  float headLockOffsetY = 0.0f;   // смещение вверх/вниз
   std::optional<float> windowMoveLastExtension;
 #if HVR
   bool wasButtonAppPressed = false;
