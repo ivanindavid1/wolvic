@@ -1397,11 +1397,46 @@ BrowserWorld::TogglePassthrough() {
   }
 }
 
+
 void
 BrowserWorld::SetLockMode(LockMode lockMode) {
   ASSERT_ON_RENDER_THREAD();
   if (m.lockMode == lockMode)
       return;
+
+  // Если выходим из режима CONTROLLER (закончили двигать окно)
+  // и хотим запомнить смещение для Head Lock
+  if (m.lockMode == LockMode::CONTROLLER && lockMode != LockMode::CONTROLLER) {
+    // Текущий reorient (куда пользователь поставил окна)
+    vrb::Matrix current = m.device->GetReorientTransform();
+    // Чистая ориентация головы без смещения
+    vrb::Matrix head = m.device->GetHeadTransform();
+
+    // Считаем разницу в позиции
+    vrb::Vector currentPos = current.GetTranslation();
+    vrb::Vector headPos = head.GetTranslation();
+    vrb::Vector delta = currentPos - headPos;
+
+    // Проецируем на локальные оси головы (right и up)
+    vrb::Vector right = head.MultiplyDirection(vrb::Vector(1.0f, 0.0f, 0.0f));
+    vrb::Vector up    = head.MultiplyDirection(vrb::Vector(0.0f, 1.0f, 0.0f));
+
+    m.headLockOffsetX = delta.Dot(right);
+    m.headLockOffsetY = delta.Dot(up);
+
+    // После движения возвращаемся в Head Lock, чтобы окно снова следовало
+    // (если пользователь хочет оставить Follow Me)
+    // Пока оставляем то, что пришло в lockMode.
+    // Если нужно всегда возвращать HEAD — раскомментируй строку ниже:
+    // lockMode = LockMode::HEAD;
+  }
+
+  // При полном выключении сбрасываем смещение
+  if (lockMode == LockMode::NO_LOCK) {
+    m.headLockOffsetX = 0.0f;
+    m.headLockOffsetY = 0.0f;
+  }
+
   m.lockMode = lockMode;
 }
 
