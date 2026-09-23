@@ -1266,34 +1266,61 @@ BrowserWorld::StartFrame() {
     m.UpdateControllers(relayoutWidgets);
     m.UpdateTrackedKeyboard();
     if (m.lockMode != LockMode::NO_LOCK) {
-    OnReorient();
+  OnReorient();
 
-    vrb::Matrix reorientTransform;
+  vrb::Matrix reorientTransform;
 
-    if (m.lockMode == LockMode::HEAD) {
+  if (m.lockMode == LockMode::HEAD) {
     // Берём ориентацию головы
-      vrb::Matrix head = m.device->GetHeadTransform();
+    vrb::Matrix head = m.device->GetHeadTransform();
 
     // Вычисляем локальные оси головы
-      vrb::Vector right = head.MultiplyDirection(vrb::Vector(1.0f, 0.0f, 0.0f));
-      vrb::Vector up    = head.MultiplyDirection(vrb::Vector(0.0f, 1.0f, 0.0f));
+    vrb::Vector right = head.MultiplyDirection(vrb::Vector(1.0f, 0.0f, 0.0f));
+    vrb::Vector up    = head.MultiplyDirection(vrb::Vector(0.0f, 1.0f, 0.0f));
 
     // Смещение в локальном пространстве головы
-      vrb::Vector offset = right * m.headLockOffsetX + up * m.headLockOffsetY;
+    vrb::Vector offset = right * m.headLockOffsetX + up * m.headLockOffsetY;
 
     // Применяем смещение
-      reorientTransform = head.PostMultiply(vrb::Matrix::Translation(offset));
-    } else {
+    reorientTransform = head.PostMultiply(vrb::Matrix::Translation(offset));
+  } else {
     // Старое поведение для CONTROLLER_LOCK
-      reorientTransform = GetActiveControllerOrientation();
+    reorientTransform = GetActiveControllerOrientation();
 
-    // ... здесь оставь весь существующий код для CONTROLLER (ThrottledWindowDistanceComputation и т.д.)
+    // Must run before reorientTransform is replaced below by a rotation-only
+    // matrix, as the distance is derived from the controller's position.
+    ThrottledWindowDistanceComputation(reorientTransform);
+
+    Quaternion controllerOrientation(reorientTransform);
+    if (!m.windowMoveStartOrientation) {
+      m.windowMoveStartOrientation = controllerOrientation;
+      // Anchor the gesture on the rotation the window already has. Reorient() assigns the
+      // reorientation matrix rather than accumulating into it, so without an anchor a zero
+      // rotation would mean the neutral orientation rather than "leave the window alone".
+      // **VERY IMPORTANT**: we invert it on purpose beacuse vrb::Quaternion(Matrix) and
+      // vrb::Matrix::Rotation() disagree on handedness, so Rotation(Quaternion(m)) yields the
+      // transpose of m. The inverse is what survives the round trip back through Reorient().
+      m.windowMoveAnchorRotation = vrb::Quaternion(m.device->GetReorientTransform()).Inverse();
+    }
+    // Turn the window by however much the controller has turned since this grab started (on top
+    // of where the window already was). Measuring from the start of the grab rather than from a
+    // fixed orientation is what keeps re-grabbing with the hand in a different pose (the usual
+    // case) from moving the window.
+    Quaternion rotation = (controllerOrientation.Inverse() * *m.windowMoveStartOrientation)
+                          * *m.windowMoveAnchorRotation;
+    if (m.previousWindowRotation) {
+      rotation = vrb::Quaternion::Slerp(*m.previousWindowRotation, rotation, 0.25f).Normalize();
     }
 
-    m.device->Reorient(reorientTransform,
-        m.lockMode == LockMode::HEAD ? DeviceDelegate::ReorientMode::SIX_DOF
-                                     : DeviceDelegate::ReorientMode::NO_ROLL);
-      }
+    reorientTransform = vrb::Matrix::Rotation(rotation);
+    m.previousWindowRotation = std::move(rotation);
+    m.reorientRequested = true;
+  }
+
+  m.device->Reorient(reorientTransform,
+      m.lockMode == LockMode::HEAD ? DeviceDelegate::ReorientMode::SIX_DOF
+                                   : DeviceDelegate::ReorientMode::NO_ROLL);
+}
     } else {
         m.previousWindowRotation.reset();
         m.windowMoveStartOrientation.reset();
